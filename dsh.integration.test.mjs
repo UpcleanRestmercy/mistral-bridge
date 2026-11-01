@@ -51,10 +51,18 @@ test("real DSH registry coexists with pi-ai, streams thinking/tools, replays his
   t.after(() => { globalThis.fetch = nativeFetch; });
   const ctx = new Context();
   t.after(() => ctx.fiber.dispose());
+  const imageReads = [];
+  ctx.provide("attachments", {
+    imageHostPath: () => undefined,
+    readImageRequest: async ref => {
+      imageReads.push(ref.attachmentId);
+      return { data: Buffer.alloc(320000), bytes: 320000, width: 100, height: 100, mediaType: "image/png" };
+    },
+  });
   await ctx.plugin(LlmRuntime);
   await ctx.plugin(PiAi, { providers: {} });
   const before = ctx.llm.listProviders().map(provider => provider.id);
-  const fiber = ctx.plugin(Bridge, { envFile: file });
+  const fiber = ctx.plugin(Bridge, { envFile: file, visionModels: ["fixture-model"] });
   await fiber.await();
   const provider = "mistral-dsh-integration";
   assert.ok(ctx.llm.listProviders().some(route => route.id === provider), JSON.stringify(ctx.llm.listProviders()));
@@ -92,6 +100,25 @@ test("real DSH registry coexists with pi-ai, streams thinking/tools, replays his
   await assert.rejects(run([user]));
   assert.equal(requests.length, 3, "a truncated response must not be retried");
   assert.equal(requests[2].headers.authorization, "Bearer rotated-fixture-key");
+  // Synthetic request versions exercise real adapter accounting without decoding images.
+  const images = Array.from({ length: 25 }, (_, index) => ({ type: "image", attachment: {
+    attachmentId: `sha256:fixture-${index}`, width: 100, height: 100, mediaType: "image/png", bytes: 320000,
+  } }));
+  const assembler = new BlockAssembler();
+  for await (const chunk of ctx.llm.stream({ provider, model: "fixture-model", messages: [createUserMessage({ content: images })] })) assembler.push(chunk);
+  assert.equal(assembler.finish.kind, "error");
+  assert.equal(assembler.finish.failure.code, "IMAGE_OFFLOAD_REQUIRED");
+  assert.equal(assembler.finish.failure.offloadImages, 16);
+  assert.equal(requests.length, 3, "over-budget images must fail before sending upstream");
+  assert.ok(images.every(block => !block.offloaded), "adapter must leave durable history unchanged");
+  imageReads.length = 0;
+  // Derived history after the host has recorded its offload decision.
+  await run([createUserMessage({ content: images.map((block, index) => index < 16 ? { ...block, offloaded: true } : block) })]);
+  assert.equal(requests.length, 4);
+  assert.equal(imageReads.length, 9, "offloaded attachments must not be read again");
+  const parts = requests[3].body.messages.flatMap(message => Array.isArray(message.content) ? message.content : []);
+  assert.equal(parts.filter(part => part.type === "image_url").length, 9);
+  assert.ok(parts.some(part => part.type === "text" && part.text.includes("image omitted to fit request image limits")));
   await fiber.dispose();
   assert.deepEqual(ctx.llm.listProviders().map(route => route.id), before);
 });
@@ -150,6 +177,8 @@ test("native DSH setup, live key rotation, legacy cold upgrade and restart witho
   });
   const fiber = ctx.plugin(Bridge, { envFile: file });
   await fiber.await(); await ready;
+  assert.equal(entry.options.config.providers["mistral-default"].maxRequestImageBytes, 4 * 1024 * 1024);
+  assert.equal(entry.options.config.providers["mistral-default"].retryPolicy.maxRetries, 8);
   assert.ok(ctx.llm.listConfigurableProviders().some(route => route.provider === "mistral-default" && route.settingsNs === "llm-pi-ai"));
   assert.deepEqual(await ctx.llm.listModels("mistral-default"), []);
   // This is the credential-service write performed by the existing Models API-key field.
@@ -176,6 +205,8 @@ test("native DSH setup, live key rotation, legacy cold upgrade and restart witho
   // has stopped. This is the existing-installation path missed by fresh setup.
   const legacy = structuredClone(entry.options.config.providers["mistral-default"]);
   delete legacy.headers;
+  // Pre-1.1 profiles carried no owner header and disabled host retries.
+  legacy.retryPolicy = { mode: "normal", maxRetries: 0 };
   const staleBase = legacy.baseURL;
   await assert.rejects(nativeFetch(staleBase.replace("/v1", "/healthz")));
   await ctx.settings.mutate("llm-pi-ai", [{ op: "set", path: ["providers", "mistral-default"], value: legacy }], revision);
@@ -197,6 +228,7 @@ test("native DSH setup, live key rotation, legacy cold upgrade and restart witho
   await upgraded.await(); await waitForNativeEndpoint();
   assert.equal(entry.options.config.providers["mistral-default"].baseURL, staleBase, "cold upgrade should reuse the existing free bridge port");
   assert.equal(entry.options.config.providers["mistral-default"].displayName, legacy.displayName);
+  assert.equal(entry.options.config.providers["mistral-default"].retryPolicy.maxRetries, 8, "migration should enable host retries");
   await run("plain");
   assert.equal(requests.at(-1), "Bearer rotated-native");
   await upgraded.dispose();
@@ -225,6 +257,7 @@ test("real Settings and ConfigEditor persist a live native endpoint through prof
   fs.writeFileSync(credentialFile, 'version: 1\nrefs:\n  MISTRAL_API_KEY: fixture-real-settings\n', { mode: 0o600 });
   const legacy = Bridge.providerProfiles([{ name: "default", models: ["fixture-model"] }], "http://127.0.0.1:1/v1", Bridge.resolveOptions())["mistral-default"];
   delete legacy.headers;
+  legacy.retryPolicy = { mode: "normal", maxRetries: 0 };
   fs.writeFileSync(path.join(dir, "cordis.patch.yml"), JSON.stringify([{ insert: [
     { id: "llm", name: "cordis:llm" },
     { id: "llm-pi-ai", name: "cordis:pi", config: { providers: { "mistral-default": legacy } } },
