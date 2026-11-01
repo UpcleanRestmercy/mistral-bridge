@@ -6,13 +6,23 @@ import { effectiveValues, listKeys, resolveKey } from "./env.mjs";
 import { createProxy } from "./proxy.mjs";
 import { discoverModels } from "./catalog.mjs";
 import { OWNER_HEADER, OWNER_VALUE, hasOwnerHeader, isBridgeEndpoint, legacyProfileAccount } from "./ownership.mjs";
+import { MAX_REQUEST_IMAGE_BYTES } from "./request-budget.mjs";
+import { log } from "./runtime-log.mjs";
 
 export const name = "mistral-bridge";
 export const inject = ["llm"];
 
+// Executed by DSH's dsh-llm-retry at agent-step boundaries: about four minutes
+// of backoff covers Mistral's multi-minute 503 waves without retrying forever.
+export const DEFAULT_RETRY_POLICY = Object.freeze({
+  mode: "normal",
+  maxRetries: 8,
+  backoff: Object.freeze({ initialDelayMs: 2000, maxDelayMs: 60000, jitterRatio: 0.2 }),
+});
+
 /** Validate plugin options before opening a listener or registering providers. */
 export function resolveOptions(raw = {}) {
-  const allowed = new Set(["envFile", "port", "models", "contextWindow", "maxTokens", "reasoning", "reasoningEfforts", "visionModels", "idleMs", "autoDiscover", "refreshModels"]);
+  const allowed = new Set(["envFile", "port", "models", "contextWindow", "maxTokens", "reasoning", "reasoningEfforts", "visionModels", "idleMs", "autoDiscover", "refreshModels", "retryPolicy"]);
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("mistral-bridge: config must be an object");
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) throw new Error(`mistral-bridge: unknown config field ${key}`);
@@ -28,6 +38,7 @@ export function resolveOptions(raw = {}) {
     idleMs: 180000,
     autoDiscover: true,
     refreshModels: 0,
+    retryPolicy: DEFAULT_RETRY_POLICY,
     ...raw,
   };
   if (!Number.isInteger(options.port) || options.port < 0 || options.port > 65535) throw new Error("mistral-bridge: port must be 0..65535");
@@ -56,6 +67,14 @@ export function resolveOptions(raw = {}) {
   } else if (options.reasoning !== "off") {
     throw new Error('mistral-bridge: set reasoning to "off" when reasoningEfforts is false');
   }
+  // DSH validates the remaining fields when the route is registered.
+  const retry = options.retryPolicy;
+  if (!retry || typeof retry !== "object" || Array.isArray(retry) || !["normal", "always"].includes(retry.mode)) {
+    throw new Error('mistral-bridge: retryPolicy.mode must be "normal" or "always"');
+  }
+  if (retry.maxRetries !== undefined && (!Number.isSafeInteger(retry.maxRetries) || retry.maxRetries < 0)) {
+    throw new Error("mistral-bridge: retryPolicy.maxRetries must be a non-negative integer");
+  }
   if (options.envFile !== undefined) {
     if (typeof options.envFile !== "string" || !options.envFile.trim()) throw new Error("mistral-bridge: envFile must be a non-empty path");
     options.envFile = path.resolve(options.envFile);
@@ -78,8 +97,10 @@ export function providerProfiles(keys, baseURL, options) {
       apiKeyEnv: entry.envVar || (entry.name === "default" ? "MISTRAL_API_KEY" : `MISTRAL_API_KEY_${entry.name.replaceAll("-", "_").toUpperCase()}`),
       reasoning: options.reasoning,
       streamIdleTimeoutMs: options.idleMs,
-      maxRequestImageBytes: 8 * 1024 * 1024,
-      retryPolicy: { mode: "normal", maxRetries: 0 },
+      // Base64 only: leave room for system prompts, tools, history and JSON
+      // below the proxy's full-body limit. DSH logs and offloads older images.
+      maxRequestImageBytes: MAX_REQUEST_IMAGE_BYTES,
+      retryPolicy: structuredClone(options.retryPolicy),
       compat: {
         thinkingFormat: "deepseek",
         supportsReasoningEffort: true,
@@ -164,6 +185,7 @@ export async function mountBridge(ctx, raw, register) {
   providerProfiles(keys, "http://127.0.0.1:0/v1", options);
   const server = createProxy({
     role: "dsh",
+    log: message => log(`dsh ${message}`),
     idleMs: options.idleMs,
     keyResolver: async reference => (await accounts()).find(account => `env:${account.name}` === reference)?.key || null,
     requireEnvKey: !(ctx.get?.("settings") || ctx.get?.("profileContext")),

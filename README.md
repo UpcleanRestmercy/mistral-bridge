@@ -81,6 +81,20 @@ From a prepared source checkout, use `pnpm dsh plugin ...`. To import a legacy e
 
 DSH owns a separate listener and closes it on unload. Native Models settings retain its connection definitions; the bridge must be enabled to use them. Other providers are preserved. Compositions without the native settings service retain the direct pi-ai adapter and dotenv path.
 
+## Native Pi Mistral extension
+
+Pi's native `mistral` / `mistral-conversations` route bypasses the bridge. Install its independent user extension with:
+
+```sh
+node scripts/install-pi.mjs
+```
+
+Run `/reload` or restart Pi. The installer copies the extension into `~/.pi/agent/extensions/mistral-request-budget/`, outside Pi's versioned runtime, without changing provider, model or credential settings. Run the installer again to update; remove that directory and reload to uninstall.
+
+The public `before_provider_request` hook measures UTF-8 JSON payload bytes with a 4 MiB cumulative base64 image target and an 8 MiB body budget, reserving another 64 KiB for native wire-field conversion. It replaces older screenshots in this request with recovery-path placeholders, saves those images under `~/.pi/agent/mistral-image-archive/`, and notifies the user. Original session history and the newest screenshot remain intact. A single newest image may exceed the image target if the body still fits; otherwise oversized text or a newest image explicitly aborts the request with a compaction/reduction suggestion.
+
+Tested offline against Pi 1.4.0's real extension loader, event runner and native Mistral provider using local HTTP only. Archived screenshots are not automatically deleted. Later payload-modifying extensions need separate checking. This extension does not use DSH's image-offload events.
+
 ## Legacy dotenv configuration
 
 ```dotenv
@@ -110,6 +124,9 @@ DSH initially uses an OS-assigned port. On subsequent starts and plugin reloads 
 - Preserve tool IDs, argument fragments, results, Markdown and UTF-8 boundaries.
 - Parse SSE events with CRLF, comments and multiline data. Incomplete streams fail explicitly.
 - Retain upstream HTTP errors. Bridge routes disable automatic request retries.
+- Mistral accepts at most 20 images per chat request; a 21st is rejected as HTTP 503 `Service unavailable` code `3800`, which looks like an outage. The bridge (DSH and ZCode) and the Pi extension keep the newest 20 images and replace older ones in that request with a text note; history is unchanged. The proxy log records `images_omitted=N`.
+- DSH limits accumulated base64 image payloads to 4 MiB. The host logs offload decisions and replaces the oldest images with text placeholders; original attachments remain host-managed. Text, prompts and tools are outside this image budget.
+- The proxy limits the complete rewritten UTF-8 JSON chat body to 8 MiB, leaving headroom below an observed gateway rejection around 10 MB (not a published upstream limit). Oversized requests receive an explicit HTTP 413 `request_too_large` before forwarding. Compact the conversation or start a new session with fewer screenshots or smaller tool results; unchanged retries cannot help. Oversized text also triggers this guard; history is never silently trimmed. Reload the plugin or restart DSH after updating to apply the new image budget to existing connections.
 - Health and logs contain request metadata rather than prompts, reasoning or API keys.
 
 Discovered capabilities are upstream declarations, not proof that generation was tested on every model. Pricing and quota remain account-specific.
@@ -119,7 +136,7 @@ Discovery outages retain existing model metadata, including native DSH settings 
 ## Verify, upgrade and uninstall
 
 - **Verify:** check the plugin's MCP status in ZCode, then open Models and confirm the Mistral connection and discovered models after entering a key. In DSH use Settings → Models. GET the connection's `/healthz` URL (replace `/v1`) and check `service: mistral-bridge` and version `1.0.0`. Health proves the listener is running, not that upstream generation works.
-- **Troubleshoot:** check Node on the GUI's PATH first, then `~/.zcode/mistral-proxy/proxy.log` or the DSH plugin error. On Windows `~` is your user directory. Discovery failures retain models and retry; for HTTP 401, check the native key. Redact logs and settings before sharing.
+- **Troubleshoot:** check Node on the GUI's PATH first, then `~/.zcode/mistral-proxy/proxy.log` or the DSH plugin error. On Windows `~` is your user directory. Discovery failures retain models and retry; for HTTP 401, check the native key. Lines with `retry=` record the bridge's own pre-stream retries of 502/503/504 or dropped connections. DSH then retries failed steps itself (8 times, 2-60 seconds); override with `retryPolicy` under the `mistral-bridge` plugin config, e.g. `{ mode: normal, maxRetries: 4 }`. Redact logs and settings before sharing.
 - **Upgrade:** for a local directory install, run `git pull --ff-only` in the checkout and update/reload through the host's plugin manager. For Git marketplaces, use the marketplace update control. Avoid repeated toggles while copying release files. Existing ZCode daemons may remain for active requests; new MCP sessions use a matching build. DSH reload closes its listener and updates native endpoints.
 - **Uninstall:** disable or uninstall in the host's plugin manager, then delete unwanted bridge connections in native Models settings. ZCode's independent daemon survives MCP exit; after requests finish, verify its PID through `/healthz` and stop that process in Task Manager (Windows) or with `kill PID` (macOS/Linux). Do not stop all Node processes by name. DSH closes its listener automatically. Remove the source directory last; do not delete the host's entire settings or credentials directory.
 

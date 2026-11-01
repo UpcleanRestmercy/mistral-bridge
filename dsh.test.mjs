@@ -38,13 +38,19 @@ test("DSH declares multiple accounts, model overrides, reasoning and vision with
   assert.deepEqual(routes["mistral-work"].models[1].input, ["text", "image"]);
   assert.deepEqual(routes["mistral-work"].models[0].reasoningEfforts, { low: "low", high: "high", max: "max" });
   assert.ok(!JSON.stringify(routes).includes("secret-"));
+  for (const route of Object.values(routes)) {
+    assert.equal(route.maxRequestImageBytes, 4 * 1024 * 1024);
+    assert.deepEqual(route.retryPolicy, { mode: "normal", maxRetries: 8, backoff: { initialDelayMs: 2000, maxDelayMs: 60000, jitterRatio: 0.2 } });
+  }
 });
 
 test("invalid DSH options and account collisions fail before startup", () => {
-  for (const raw of [null, [], { typo: 1 }, { port: -1 }, { port: 65536 }, { models: [] }, { models: [null] }, { envFile: "" }, { idleMs: 2147483648 }, { contextWindow: 100 }, { reasoning: "off" }, { reasoningEfforts: {} }, { reasoningEfforts: { low: null } }, { reasoningEfforts: false }]) {
+  for (const raw of [null, [], { typo: 1 }, { port: -1 }, { port: 65536 }, { models: [] }, { models: [null] }, { envFile: "" }, { idleMs: 2147483648 }, { contextWindow: 100 }, { reasoning: "off" }, { reasoningEfforts: {} }, { reasoningEfforts: { low: null } }, { reasoningEfforts: false }, { retryPolicy: null }, { retryPolicy: { mode: "never" } }, { retryPolicy: { mode: "normal", maxRetries: -1 } }]) {
     assert.throws(() => resolveOptions(raw), /mistral-bridge:/);
   }
   assert.equal(resolveOptions({ reasoning: "off", reasoningEfforts: false }).reasoningEfforts, false);
+  const always = { mode: "always", backoff: { initialDelayMs: 1000 } };
+  assert.deepEqual(providerProfiles([{ name: "default" }], "http://localhost", resolveOptions({ retryPolicy: always }))["mistral-default"].retryPolicy, always);
   assert.equal(resolveOptions({ reasoning: "off", reasoningEfforts: { off: null, high: "high" } }).reasoning, "off");
   assert.throws(() => providerProfiles([{ name: "work" }, { name: "work" }], "http://localhost", resolveOptions()), /duplicate provider/);
 });

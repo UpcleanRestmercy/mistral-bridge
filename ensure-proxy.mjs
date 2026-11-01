@@ -36,10 +36,11 @@ async function probe(port) {
 
 // Capture the launch sources when this module loads. An in-place upgrade after
 // this point cannot make the child load a different build from the parent.
-const sourceNames = ["proxy.mjs", "env.mjs", "zcode-source.mjs", "ownership.mjs", "daemon.mjs", "port.mjs", "runtime-log.mjs"];
+const coreNames = ["proxy.mjs", "env.mjs", "request-budget.mjs", "zcode-source.mjs", "ownership.mjs", "daemon.mjs"];
+const sourceNames = [...coreNames, "port.mjs", "runtime-log.mjs"];
 const sources = new Map(sourceNames.map(name => [name, fs.readFileSync(new URL(name, import.meta.url))]));
 const capturedHash = createHash("sha256");
-for (const name of sourceNames.slice(0, 5)) capturedHash.update(sources.get(name));
+for (const name of coreNames) capturedHash.update(sources.get(name));
 const snapshotMatches = capturedHash.digest("hex") === CORE_SHA256;
 
 async function spawnDaemon(port) {

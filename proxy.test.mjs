@@ -5,7 +5,7 @@ import net from "node:net";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { rewriteRequest, rewriteResponse, transformSse, createProxy, VERSION } from "./proxy.mjs";
+import { rewriteRequest, rewriteResponse, transformSse, createProxy, limitRequestImages, VERSION, MAX_REQUEST_BODY_BYTES } from "./proxy.mjs";
 
 const packet = (delta, finish_reason = null, index = 0) => ({ choices: [{ index, delta, finish_reason }] });
 const frame = obj => `data: ${JSON.stringify(obj)}\n\n`;
@@ -17,6 +17,20 @@ async function collect(parts) {
 }
 const think = text => ({ type: "thinking", thinking: [{ type: "text", text }] });
 
+test("oldest images beyond the 20-image request limit become text notes", () => {
+  const image = n => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${n}` } });
+  const body = { messages: [
+    { role: "user", content: [image(0), { type: "text", text: "keep" }, image(1)] },
+    { role: "assistant", content: "ok" },
+    { role: "user", content: Array.from({ length: 20 }, (_, i) => image(i + 2)) },
+  ] };
+  assert.equal(limitRequestImages(body), 2);
+  assert.equal(body.messages[0].content[0].type, "text");
+  assert.equal(body.messages[0].content[1].text, "keep");
+  assert.match(body.messages[0].content[2].text, /at most 20 images/);
+  assert.deepEqual(body.messages[2].content.map(b => b.image_url.url), Array.from({ length: 20 }, (_, i) => `data:image/jpeg;base64,${i + 2}`));
+  assert.equal(limitRequestImages(body), 0);
+});
 test("separate thinking from exact Markdown, streaming and non-streaming", () => {
   const code = '```python\nprint("中文😀")\n```';
   for (const field of ["delta", "message"]) {
@@ -92,7 +106,7 @@ async function fixture(t, handler, options = {}) {
   const up = http.createServer(handler);
   await new Promise(r => up.listen(0, "127.0.0.1", r));
   const logs = [];
-  const bridge = createProxy({ upstream: `http://127.0.0.1:${up.address().port}`, log: m => logs.push(m), ...options });
+  const bridge = createProxy({ upstream: `http://127.0.0.1:${up.address().port}`, log: m => logs.push(m), retryDelaysMs: [5, 5], ...options });
   await new Promise(r => bridge.listen(0, "127.0.0.1", r));
   t.after(async () => {
     await Promise.all([up, bridge].map(s => new Promise(r => { s.close(r); s.closeAllConnections(); })));
@@ -133,12 +147,60 @@ test("foreign Host and Origin are rejected before resolving credentials or forwa
   assert.equal(resolved, 2); assert.equal(forwarded, 2);
 });
 test("HTTP errors retain status and body even for stream requests", async t => {
-  for (const status of [400, 402, 404, 422, 429, 500]) {
+  for (const status of [400, 402, 404, 413, 422, 429, 500, 503]) {
     const payload = JSON.stringify({ error: { message: "fixture failure", code: "fixture" } });
     const { url } = await fixture(t, (_, res) => { res.writeHead(status, { "content-type": "application/json" }); res.end(payload); });
     const response = await post(url);
     assert.equal(response.status, status); assert.equal(await response.text(), payload);
   }
+});
+test("full-body guard blocks accumulated screenshots and text/tool overhead before forwarding", async t => {
+  let forwarded = 0, resolved = 0;
+  const { url, logs } = await fixture(t, (_, res) => { forwarded++; res.end("{}"); }, {
+    keyResolver: () => { resolved++; return "fixture-secret"; },
+  });
+  const image = { type: "image_url", image_url: { url: "data:image/png;base64," + "A".repeat(430000) } };
+  const bodies = [
+    // The reported failure: 25 accumulated screenshots, about 10 MB base64.
+    { messages: [{ role: "user", content: Array.from({ length: 25 }, () => image) }] },
+    // Images fit the new budget, but UTF-8 text and tool schemas exceed the body budget.
+    { messages: [{ role: "user", content: [image, { type: "text", text: "中文😀".repeat(500000) }] }], tools: [{ type: "function", function: { name: "fixture", description: "s".repeat(4000000), parameters: { type: "object" } } }] },
+    { messages: [{ role: "tool", tool_call_id: "fixture", content: "x".repeat(MAX_REQUEST_BODY_BYTES) }] },
+  ];
+  for (const body of bodies) {
+    const response = await fetch(url + "/v1/chat/completions", {
+      method: "POST", headers: { authorization: "Bearer env:default" }, body: JSON.stringify({ stream: true, ...body }),
+    });
+    assert.equal(response.status, 413);
+    const failure = (await response.json()).error;
+    assert.equal(failure.code, "request_too_large");
+    assert.match(failure.message, /Compact the conversation/);
+    assert.match(failure.message, /Retrying the unchanged request will not help/);
+  }
+  assert.equal(forwarded, 0);
+  assert.equal(resolved, 0);
+  assert.ok(logs.every(line => !line.includes("fixture-secret") && !line.includes("data:image")));
+});
+test("body guard uses the rewritten UTF-8 size and accepts its exact boundary", async t => {
+  const received = [];
+  const { url } = await fixture(t, async (req, res) => {
+    let size = 0;
+    for await (const chunk of req) size += chunk.length;
+    received.push(size); res.end("{}");
+  });
+  const body = { messages: [{ role: "assistant", content: "", reasoning_content: "中文😀" }] };
+  const overhead = Buffer.byteLength(JSON.stringify(rewriteRequest(structuredClone(body))));
+  body.messages[0].content = "a";
+  // Adding content introduces a text block as well as the content itself.
+  const blockOverhead = Buffer.byteLength(JSON.stringify(rewriteRequest(structuredClone(body)))) - overhead - 1;
+  body.messages[0].content = "a".repeat(MAX_REQUEST_BODY_BYTES - overhead - blockOverhead);
+  const send = payload => fetch(url + "/v1/chat/completions", { method: "POST", body: JSON.stringify(payload) });
+  assert.equal((await send(body)).status, 200);
+  assert.deepEqual(received, [MAX_REQUEST_BODY_BYTES]);
+  body.messages[0].content += "a";
+  assert.equal((await send(body)).status, 413);
+  assert.equal(received.length, 1);
+  assert.equal((await (await fetch(url + "/healthz")).json()).maxRequestBodyBytes, MAX_REQUEST_BODY_BYTES);
 });
 test("HTTP bridge transforms history and output; health reports version", async t => {
   let received;
@@ -163,8 +225,78 @@ test("truncated tool stream breaks transport and is never retried", async t => {
     setTimeout(() => res.end(), 30);
   });
   const response = await post(url);
-  await assert.rejects(response.text());
+  const reader = response.body.getReader(), decoder = new TextDecoder();
+  let text = "";
+  await assert.rejects((async () => { for (;;) { const { done, value } = await reader.read(); if (done) return; text += decoder.decode(value); } })());
   assert.equal(requests, 1); assert.ok(logs.some(l => l.includes("upstream_stream_incomplete")));
+  // Hosts classify "terminated" as a transport failure and re-run the step.
+  assert.match(text, /upstream connection terminated mid-stream \(upstream_stream_incomplete, request [0-9a-f]+\)/);
+});
+test("mid-stream failures send a retryable error frame before breaking transport", async t => {
+  const { url } = await fixture(t, (_, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(frame(packet({ content: "partial" })));
+    setTimeout(() => res.end(), 30);
+  });
+  const address = new URL(url);
+  const raw = await new Promise((resolve, reject) => {
+    const socket = net.connect({ host: "127.0.0.1", port: Number(address.port) }, () => {
+      socket.write(`POST /v1/chat/completions HTTP/1.1\r\nhost: ${address.host}\r\ncontent-type: application/json\r\ncontent-length: 2\r\n\r\n{}`);
+    });
+    let text = "";
+    socket.on("data", chunk => { text += chunk; });
+    socket.on("close", () => resolve(text));
+    socket.on("error", reject);
+  });
+  const error = JSON.parse(/data: (\{"error".*)/.exec(raw)[1]).error;
+  assert.equal(error.code, "upstream_stream_incomplete");
+  // ZCode's provider-business classifier retries this code; DSH and Pi match "terminated".
+  assert.equal(error.providerCode, "network_error_retryable");
+  assert.match(error.message, /terminated mid-stream/);
+});
+test("bridge forwards at most 20 images and logs the omission", async t => {
+  let forwarded;
+  const { url, logs } = await fixture(t, async (req, res) => {
+    let s = ""; for await (const b of req) s += b;
+    forwarded = JSON.parse(s);
+    res.writeHead(200, { "content-type": "application/json" }); res.end('{"choices":[]}');
+  });
+  const content = Array.from({ length: 21 }, (_, i) => ({ type: "image_url", image_url: { url: `data:image/png;base64,${i}` } }));
+  const response = await fetch(url + "/v1/chat/completions", { method: "POST", body: JSON.stringify({ messages: [{ role: "user", content }] }) });
+  assert.equal(response.status, 200);
+  assert.equal(forwarded.messages[0].content.filter(b => b.type === "image_url").length, 20);
+  assert.equal(forwarded.messages[0].content[0].type, "text");
+  assert.ok(logs.some(l => l.includes("images_omitted=1")));
+});
+test("transient upstream statuses are retried before any byte reaches the client", async t => {
+  let requests = 0;
+  const { url, logs } = await fixture(t, (_, res) => {
+    if (++requests < 3) { res.writeHead(503, { "content-type": "application/json" }); res.end('{"message":"Service unavailable."}'); return; }
+    res.writeHead(200, { "content-type": "text/event-stream" }); res.end(frame(packet({ content: "ok" })) + end);
+  });
+  const response = await post(url);
+  assert.equal(response.status, 200); assert.ok((await response.text()).includes('"content":"ok"'));
+  assert.equal(requests, 3);
+  assert.deepEqual(logs.filter(l => l.includes("retry=")).map(l => l.replace(/request=\w+ /, "")), ["retry=1 reason=status_503", "retry=2 reason=status_503"]);
+});
+test("pre-stream retries are bounded and keep the final upstream error", async t => {
+  let requests = 0;
+  const { url } = await fixture(t, (_, res) => { requests++; res.writeHead(502, { "content-type": "application/json" }); res.end('{"message":"bad gateway"}'); });
+  const response = await post(url);
+  assert.equal(response.status, 502); assert.equal(await response.text(), '{"message":"bad gateway"}');
+  assert.equal(requests, 3);
+});
+test("dropped upstream connections are retried; client errors are not", async t => {
+  let requests = 0;
+  const { url } = await fixture(t, (req, res) => {
+    if (++requests === 1) { req.socket.destroy(); return; }
+    res.writeHead(200, { "content-type": "application/json" }); res.end('{"choices":[]}');
+  });
+  const response = await post(url);
+  assert.equal(response.status, 200); assert.equal(requests, 2);
+  let rejected = 0;
+  const { url: url400 } = await fixture(t, (_, res) => { rejected++; res.writeHead(400); res.end("{}"); });
+  assert.equal((await post(url400)).status, 400); assert.equal(rejected, 1);
 });
 test("client cancellation closes upstream", async t => {
   let resolveClosed;

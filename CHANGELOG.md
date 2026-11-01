@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Add an optional standalone Pi user extension for native Mistral. Measure JSON bytes through the public request hook, archive older screenshots with recovery-path placeholders, preserve session history and the newest screenshot, and explicitly abort requests that still cannot fit. Include a user-directory installer and offline native Pi integration check without editing Pi runtime or credentials.
+
+- Lower DSH's cumulative base64 image budget from 8 MiB to 4 MiB so the host offloads older screenshots earlier.
+- Enable DSH request retries: normal mode, 8 retries, 2-60 second exponential backoff with 20% jitter (about four minutes), configurable through the plugin's `retryPolicy` option. Legacy profiles adopt it on migration.
+- Retry upstream 502/503/504 and dropped connections twice (1 s, 3 s) inside the bridge before any byte reaches the client. Never retry after streamed output.
+- Report transient mid-stream failures as "upstream connection terminated mid-stream" with `providerCode: "network_error_retryable"`, so DSH and Pi classify them as transport errors and ZCode starts stream recovery.
+- Fix the mid-stream error frame being discarded: the bridge now breaks the transport only after the frame is flushed (1 s fallback).
+- Log DSH listener requests to `proxy.log` with a `dsh` prefix.
+- Keep at most 20 images per chat request (bridge and Pi extension). Mistral rejects a 21st image with a misleading HTTP 503 code 3800; older images in that request become text notes and are logged as `images_omitted`.
+- Add opt-in `MISTRAL_BRIDGE_CAPTURE_DIR`: failed upstream chat requests are saved there (mode 0600, no key) for replay.
+- Guard the complete rewritten UTF-8 chat body at 8 MiB before upstream dispatch, including prompts, tools, text and images. Return an actionable HTTP 413 instead of forwarding a body likely to encounter the observed gateway 503 size rejection. Preserve history and upstream error responses.
+- Report request byte counts in metadata-only logs and expose the body limit in health checks. Cover accumulated screenshots, tool/text overhead, UTF-8, rewritten-body boundaries and real DSH adapter offload/replay offline.
+
 ## 1.0.0
 
 - Retry failed ZCode model discovery with exponential backoff (2 seconds to 60 seconds), refresh unchanged accounts every five minutes, and serialize manual/automatic synchronization.

@@ -54,10 +54,12 @@
     "CHANGELOG.md",
     "marketplace.json",
     "CONTRIBUTING.md",
-    "scripts/test-package.mjs"
+    "scripts/test-package.mjs",
+    "scripts/install-pi.mjs",
+    "scripts/test-pi-native.mjs"
   ],
   "scripts": {
-    "test": "node --test proxy.test.mjs lifecycle.test.mjs provider-config.test.mjs env.test.mjs dsh.test.mjs settings.test.mjs auto-sync.test.mjs smoke.test.mjs",
+    "test": "node --test proxy.test.mjs lifecycle.test.mjs provider-config.test.mjs env.test.mjs dsh.test.mjs settings.test.mjs auto-sync.test.mjs smoke.test.mjs pi-extension.test.mjs",
     "test:live": "node live-smoke.mjs",
     "test:dsh": "node --test dsh.integration.test.mjs",
     "test:package": "node scripts/test-package.mjs"
