@@ -30,7 +30,7 @@ test("native Pi budgets real base64 bytes, archives oldest screenshots and prese
   assert.deepEqual(result.payload.messages.slice(2), payload.messages.slice(2));
   assert.deepEqual(result.payload.tools, payload.tools);
   assert.deepEqual(fs.readFileSync(result.archived[0]), Buffer.alloc(320000));
-  assert.ok(result.payload.messages[1].content[0].text.includes(result.archived[0]));
+  assert.ok(result.payload.messages[1].content[0].text.includes(JSON.stringify(result.archived[0])));
   assert.deepEqual(prepareMistralRequest(payload, options).archived, result.archived, "replay reuses content-addressed originals");
 });
 test("Pi archives the oldest images beyond Mistral's 20-image request limit", t => {
