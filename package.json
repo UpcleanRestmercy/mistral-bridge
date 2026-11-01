@@ -1,0 +1,80 @@
+{
+  "name": "mistral-bridge",
+  "version": "1.0.0",
+  "description": "ZCode and DSH Mistral bridge using native API-key settings, model discovery and reasoning-aware streaming.",
+  "type": "module",
+  "license": "MIT",
+  "author": "UpcleanRestmercy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UpcleanRestmercy/mistral-bridge.git"
+  },
+  "engines": {
+    "node": ">=20.12",
+    "dsh": ">=0.2.1-rc.5 <0.3.0"
+  },
+  "exports": {
+    "./dsh": "./dsh.mjs",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/dsh-llm": ">=0.2.1-rc.5 <0.3.0",
+    "@deepseek-ai/dsh-llm-pi-ai": ">=0.2.1-rc.5 <0.3.0",
+    "@earendil-works/pi-ai": "^1.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm-pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    }
+  },
+  "files": [
+    "*.mjs",
+    "cordis.patch.yml",
+    ".env.example",
+    ".mcp.json",
+    ".zcode-plugin/",
+    "skills/",
+    "README.zh-CN.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "marketplace.json",
+    "CONTRIBUTING.md",
+    "scripts/test-package.mjs"
+  ],
+  "scripts": {
+    "test": "node --test proxy.test.mjs lifecycle.test.mjs provider-config.test.mjs env.test.mjs dsh.test.mjs settings.test.mjs auto-sync.test.mjs smoke.test.mjs",
+    "test:live": "node live-smoke.mjs",
+    "test:dsh": "node --test dsh.integration.test.mjs",
+    "test:package": "node scripts/test-package.mjs"
+  },
+  "homepage": "https://github.com/UpcleanRestmercy/mistral-bridge",
+  "bugs": {
+    "url": "https://github.com/UpcleanRestmercy/mistral-bridge/issues"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/cordis-plugin-loader": "1.0.6",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-credentials-local": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-app-boot": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-config-editor": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-settings": "0.2.1-rc.5",
+    "@earendil-works/pi-ai": "1.1.0"
+  }
+}

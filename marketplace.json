@@ -1,0 +1,13 @@
+{
+  "name": "mistral-bridge-marketplace",
+  "plugins": [
+    {
+      "name": "mistral-bridge",
+      "source": "./",
+      "version": "1.0.0",
+      "displayName": "Mistral Bridge",
+      "description": "Mistral models, native credentials and reasoning-aware streaming for ZCode.",
+      "category": "developer-tools"
+    }
+  ]
+}

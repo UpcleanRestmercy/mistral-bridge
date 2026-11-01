@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mistral-bridge": {
+      "command": "node",
+      "timeoutMs": 60000,
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server.mjs"]
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "mistral-bridge",
+  "version": "1.0.0",
+  "description": "Mistral bridge with native API-key settings, automatic setup and model discovery, reasoning-aware streaming and tool history.",
+  "author": {
+    "name": "UpcleanRestmercy"
+  },
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills"
+}

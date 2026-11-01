@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.*
+!.env.example
+*.log
+evidence/
+state.json
+.DS_Store
+
+*.tgz
