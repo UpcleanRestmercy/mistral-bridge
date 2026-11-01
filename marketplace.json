@@ -4,7 +4,7 @@
     {
       "name": "mistral-bridge",
       "source": "./",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "displayName": "Mistral Bridge",
       "description": "Mistral models, native credentials and reasoning-aware streaming for ZCode.",
       "category": "developer-tools"

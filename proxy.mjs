@@ -8,7 +8,7 @@ import { resolveKey, credentialSourceId } from "./env.mjs";
 import { MAX_REQUEST_BODY_BYTES, MAX_REQUEST_IMAGES } from "./request-budget.mjs";
 export { MAX_REQUEST_BODY_BYTES, MAX_REQUEST_IMAGES } from "./request-budget.mjs";
 
-export const VERSION = "1.0.0";
+export const VERSION = "1.1.0";
 export const PROXY_PORT = Number(process.env.MISTRAL_BRIDGE_PORT || 8791);
 if (!Number.isInteger(PROXY_PORT) || PROXY_PORT < 1 || PROXY_PORT > 65535) throw new Error("Invalid MISTRAL_BRIDGE_PORT");
 // Fingerprint every file that changes request behaviour so a daemon from an

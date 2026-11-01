@@ -1,4 +1,12 @@
-# Release verification: 1.0.0
+# Release verification
+
+## 1.1.0
+
+Root cause of the DSH failures that motivated this release: Mistral rejects a 21st image in one chat request with HTTP 503 `Service unavailable` code `3800`. Reproduced on 2026-11-01 against the live API with account-owned credentials: 20 small images returned 200 and 21 or 22 returned 503; request bodies up to 8.2 MiB, a 3.7 MiB single image and a 297k-token prompt with an image all returned 200. A captured failing DSH request (21 JPEG images, about 217k tokens) returned 503 unchanged and 200 after omitting its oldest image, both directly and through the bridge (`images_omitted=1`). The same 503 code is returned when `max_tokens` exceeds the model's context (about 1,048,548 tokens for `deepseek-v4-1-flash-1017`).
+
+Offline verification: **73/73 tests**, **3/3 real DSH integration tests** and the npm archive check on Linux; CI passes on Ubuntu and Windows with Node 20.12.2, 22 and 24. The DSH retry classification of bridge failures was checked with DSH's bundled pi-ai client against local fixtures. ZCode stream recovery after a real mid-stream disconnect has not been exercised in the GUI.
+
+## 1.0.0
 
 The 0.5.4 review identified failures in discovery recovery, late legacy credential imports, upgrade/startup process cleanup, installation instructions, native-key smoke testing and reproducible package verification. Version 1.0.0 addresses these with regression tests, a marketplace manifest, pinned development dependencies and CI.
 

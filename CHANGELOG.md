@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
 
 - Add an optional standalone Pi user extension for native Mistral. Measure JSON bytes through the public request hook, archive older screenshots with recovery-path placeholders, preserve session history and the newest screenshot, and explicitly abort requests that still cannot fit. Include a user-directory installer and offline native Pi integration check without editing Pi runtime or credentials.
 
